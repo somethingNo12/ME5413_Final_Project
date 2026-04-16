@@ -4,7 +4,7 @@
 [![ROS Noetic](https://img.shields.io/badge/ROS-Noetic-22314E?logo=ros&logoColor=white)](http://wiki.ros.org/noetic)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Autonomous navigation for a Clearpath Jackal in a Gazebo multi-floor warehouse world** — mapping with 2D LiDAR, localization with AMCL, vision-based perception (YOLOv5 + OCR), and a scripted mission state machine for the NUS ME5413 course project (AY25/26).
+**Clearpath Jackal** in a Gazebo multi-floor warehouse (**`me5413_project_2526`**) — **SLAM Toolbox** for mapping, **AMCL** + **`move_base`** for navigation, **YOLOv5** and **EasyOCR** for vision, and a Python **task executor** for the ME5413 mission (AY25/26).
 
 ![Course environment overview](src/me5413_world/media/overview2526.png)
 
@@ -13,161 +13,139 @@
 Autonomous run (single session) — screen recording:
 
 <video src="media/ME5413_demo.mp4" controls muted playsinline width="100%">
-  Video not shown in your viewer — open <a href="media/ME5413_demo.mp4"><code>media/ME5413_demo.mp4</code></a> or use the file on GitHub.
+  Video not shown in your viewer — open <a href="media/ME5413_demo.mp4"><code>media/ME5413_demo.mp4</code></a>.
 </video>
 
 Direct file: [`media/ME5413_demo.mp4`](media/ME5413_demo.mp4)
 
 ---
 
-## At a glance
+## How this project is run
 
-| Layer | What this repo uses |
-|--------|---------------------|
-| **Simulation** | Gazebo world `me5413_project_2526`, Jackal with sensors, randomised props & moving obstacle |
-| **Mapping** | Course default **GMapping** *or* bundled **[slam_toolbox](https://github.com/SteveMacenski/slam_toolbox)** (async online SLAM) |
-| **Localization** | **AMCL** (particle filter MCL on a saved map) |
-| **Planning / control** | ROS navigation stack (`move_base`, global/local planners) as wired in `navigation.launch` |
-| **Perception** | **YOLOv5** (cone / obstacle cues) and **EasyOCR** (digit recognition on numbered boxes & rooms) via `yolov5_detector` |
-| **Mission logic** | Python state machine `task_executor.py` + helpers (e.g. initial pose publisher, world plugins) |
+### Typical session (simulation + autonomy)
 
-Ground-truth topics (e.g. `/gazebo/ground_truth/state`) are **not** used in the autonomous solution — consistent with course rules.
+Use **two terminals** after you already have a saved map (see [Mapping](#mapping-one-time-or-when-the-world-changes)).
+
+| Step | Terminal | Command | What it does |
+|------|----------|---------|----------------|
+| **1** | 1 | `roslaunch me5413_world world.launch` | Gazebo world, Jackal spawn, plugins, sim time |
+| **2** | 2 | `roslaunch me5413_world navigation.launch` | Map server, AMCL, `move_base`, RViz, perception nodes, `task_executor.py` (see below) |
+
+That is the intended **operating order**: world first, then navigation.
+
+### What `navigation.launch` starts (order in file)
+
+1. **`teleop_twist_keyboard`** — keyboard teleop (also useful if you need a nudge).
+2. **`map_server`** — loads `$(find me5413_world)/maps/my_map.yaml` by default.
+3. **`amcl`** — Monte Carlo localization on the loaded map.
+4. **`move_base`** (from `jackal_navigation`) — global/local planning and control.
+5. **Costmap / planner tweaks** — e.g. `tim551` as laser `sensor_frame`, smaller inflation, velocity limits.
+6. **RViz** — `me5413_world/rviz/navigation.rviz`.
+7. **`initial_pose_publisher`** — publishes an initial pose to AMCL after a **3 s** delay.
+8. **`block_detector_yolov5_node`** — YOLOv5 on `/front/image_raw` → `/blockornot` (used when task phase enables it).
+9. **`easyocr_digit_node`** — digit reading for early task phases (`enable_easyocr`, default `true`).
+10. **`room_digit_detector_node`** — room digit detection when `/room_digit_detector_enable` is on.
+11. **`task_executor.py`** — autonomous mission state machine (`auto_task`, default `true`).
+
+Ground-truth topics such as `/gazebo/ground_truth/state` are **not** used in the autonomous pipeline (course rule).
 
 ---
 
-## Repository layout
+## Mapping (one-time, or when the world changes)
 
-This is a **ROS Noetic catkin workspace**. Main packages under `src/`:
+This workspace uses **[slam_toolbox](https://github.com/SteveMacenski/slam_toolbox)** for 2D LiDAR mapping — **not GMapping**.
+
+1. Start the world:  
+   `roslaunch me5413_world world.launch`
+2. In another terminal, run mapping:  
+   `roslaunch me5413_world slam_toolbox_mapping.launch`
+3. Drive the robot (teleop is included) until the map looks good.
+4. Save the map (example — adjust path if needed):
+
+```bash
+roscd me5413_world/maps
+rosrun map_server map_saver -f my_map map:=/map
+```
+
+The default `navigation.launch` map argument points at **`me5413_world/maps/my_map.yaml`**. Change the `map_file` arg if you use another name.
+
+---
+
+## Stack summary
+
+| Piece | Choice in this repo |
+|--------|---------------------|
+| Simulation | Gazebo + `me5413_project_2526`, Jackal, sensors, random props |
+| **Mapping** | **SLAM Toolbox** (`slam_toolbox_mapping.launch`) |
+| Localization | AMCL |
+| Planning | `move_base` (Jackal navigation stack) |
+| Vision | YOLOv5 + EasyOCR (`yolov5_detector`) |
+| Mission | `me5413_world/scripts/task_executor.py` |
+
+---
+
+## Repository layout (`src/`)
 
 | Package | Role |
 |---------|------|
-| `me5413_world` | Gazebo world, launches (world / teleop / mapping / navigation), maps, RViz configs, Gazebo plugins, **`scripts/task_executor.py`** |
-| `jackal_description` | Jackal URDF / xacro and meshes |
-| `interactive_tools` | RViz panel plugin to spawn / clear random objects |
-| `slam_toolbox` (+ msgs, rviz, `karto_sdk`) | 2D SLAM as an alternative to GMapping |
-| `amcl` | AMCL built from source in-tree (v1.17.x) |
-| `yolov5_detector` | Camera pipeline: YOLOv5 + EasyOCR nodes |
+| `me5413_world` | Worlds, launches (`world`, `slam_toolbox_mapping`, `navigation`, …), maps, RViz, plugins, **`task_executor.py`** |
+| `jackal_description` | Jackal URDF / meshes |
+| `interactive_tools` | RViz panel (spawn / clear random objects) |
+| `slam_toolbox` (+ msgs, rviz, `karto_sdk`) | **2D SLAM** used for mapping |
+| `amcl` | AMCL built in-tree |
+| `yolov5_detector` | Camera / YOLO / OCR nodes |
 
-Upstream course template: [NUS-Advanced-Robotics-Centre/ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
-
----
-
-## Prerequisites
-
-- **Ubuntu 20.04** (recommended)
-- **ROS Noetic** (`desktop-full` or equivalent + navigation / perception stacks)
-- **Catkin** toolchain (`catkin_make`)
-- **Gazebo** models (official + project models — see below)
-
-Standard ROS dependencies are declared in package `package.xml` files; use `rosdep` to pull them in.
-
-### Python (perception)
-
-The `yolov5_detector` nodes expect a Python environment with **PyTorch**, **OpenCV**, and **EasyOCR** (and YOLOv5 utils under `src/yolov5_detector/yolov5/`). Install versions compatible with your CUDA/CPU setup; GPU is optional but supported in the scripts.
+Fork / upstream course template: [NUS-Advanced-Robotics-Centre/ME5413_Final_Project](https://github.com/NUS-Advanced-Robotics-Centre/ME5413_Final_Project).
 
 ---
 
-## Build & source
+## Prerequisites & build
+
+- **Ubuntu 20.04**, **ROS Noetic**, **catkin**
+- **Gazebo** models: [osrf/gazebo_models](https://github.com/osrf/gazebo_models) + copy `src/me5413_world/models/*` → `~/.gazebo/models/`
 
 ```bash
 cd <path-to-workspace>
 rosdep install --from-paths src --ignore-src -r -y
-# Optional: extra simulation packages (if rosdep misses any)
 sudo apt install -y ros-noetic-sick-tim ros-noetic-lms1xx ros-noetic-velodyne-description \
   ros-noetic-pointgrey-camera-description ros-noetic-jackal-control
 catkin_make
 source devel/setup.bash
 ```
 
----
-
-## Gazebo models
-
-Copy assets into `~/.gazebo/models/`:
-
-1. **Official models** — clone [osrf/gazebo_models](https://github.com/osrf/gazebo_models) and copy into `~/.gazebo/models`.
-2. **Project models** — copy `src/me5413_world/models/*` to `~/.gazebo/models`.
+**Python (perception):** PyTorch, OpenCV, EasyOCR; YOLOv5 code under `src/yolov5_detector/yolov5/`. GPU optional.
 
 ---
 
-## Quick start
+## Mission (short)
 
-### 0 — World + robot
-
-```bash
-roslaunch me5413_world world.launch
-```
-
-### 1 — Teleop (optional exploration)
-
-```bash
-roslaunch me5413_world manual.launch
-```
-
-### 2 — Mapping
-
-**Option A — GMapping (course default)**
-
-```bash
-roslaunch me5413_world mapping.launch
-# Save map (example)
-roscd me5413_world/maps
-rosrun map_server map_saver -f my_map map:=/map
-```
-
-**Option B — slam_toolbox (recommended in this workspace)**
-
-```bash
-roslaunch me5413_world slam_toolbox_mapping.launch
-# Save map the same way once /map is published
-```
-
-### 3 — Navigation + full stack
-
-After a map exists under `me5413_world/maps/`:
-
-```bash
-roslaunch me5413_world navigation.launch
-```
-
-This brings up localization, planners, RViz, and the integrated perception / mission nodes as defined in the launch file.
+Lower floor: count numbered boxes, publish `/cmd_unblock` when needed, exit, ramp to upper floor, pass corridors, choose the open gap when a cone blocks one side, avoid the moving cylinder “pedestrian”, stop in the room matching the **least frequent** digit from downstairs — without ground-truth odometry or `/box_odom`.
 
 ---
 
-## Mission (course brief, short)
+## Configuration
 
-Typical objectives include: counting numbered boxes on the lower floor, unblocking the exit via `/cmd_unblock` (`std_msgs/Bool`), reaching the upper floor via the ramp, choosing the correct corridor when a cone blocks one gap, avoiding the moving “pedestrian”, and **stopping in the room whose digit appears least often** on the lower floor — all **without** cheating ground-truth odometry or box topics.
+- Goals / waypoints: `me5413_world/config/config.yaml`
+- Map files: `me5413_world/maps/` (`my_map.yaml` / `my_map.pgm`)
+- Navigation RViz: `me5413_world/rviz/navigation.rviz`  
+- Mapping RViz: `me5413_world/rviz/slam_toolbox.rviz`
 
----
-
-## Configuration notes
-
-- **Waypoints / goals**: see `me5413_world/config/config.yaml` and parameters loaded in launch files.
-- **Maps**: `me5413_world/maps/` (`my_map.yaml` / `my_map.pgm` in this project).
-- **RViz**: configs under `me5413_world/rviz/` (`navigation.rviz`, `slam_toolbox.rviz`, etc.).
-
-For a deeper **architecture / topic-level** description (Chinese), see `PROJECT_ARCHITECTURE.md` in this workspace if present.
+More detail (topics, state machine): `PROJECT_ARCHITECTURE.md` (if present locally).
 
 ---
 
 ## Screenshots
 
-| Manual / teleop | Mapping | Navigation |
-|-----------------|---------|------------|
-| ![manual](src/me5413_world/media/rviz_manual.png) | ![mapping](src/me5413_world/media/rviz_mapping.png) | ![navigation](src/me5413_world/media/rviz_navigation.png) |
+| SLAM Toolbox mapping | Navigation |
+|----------------------|------------|
+| ![mapping](src/me5413_world/media/rviz_mapping.png) | ![navigation](src/me5413_world/media/rviz_navigation.png) |
 
-RViz object panel:
+RViz object panel (random props):
 
 ![control panel](src/me5413_world/media/control_panel.png)
 
 ---
 
-## Contributing & course policy
+## Contributing & license
 
-Bugfixes and improvements are welcome via PRs to the upstream course repo when appropriate. For assignment rules, deadlines, and grading, follow the **official ME5413 Canvas / brief**.
-
----
-
-## License
-
-This project inherits the **MIT** license from the course template — see [`LICENSE`](LICENSE).
+Course policy and deadlines: **ME5413 Canvas**. Code template: **MIT** — see [`LICENSE`](LICENSE).
