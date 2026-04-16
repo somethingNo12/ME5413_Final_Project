@@ -1,0 +1,10 @@
+﻿<launch>
+  <arg name="enable_block_detector" default="true" />
+
+  <node if="$(arg enable_block_detector)"
+        pkg="yolov5_detector"
+        type="block_detector_yolov5_node.py"
+        name="block_detector_yolov5_node"
+        ns="yolov5_detector"
+        output="screen" />
+</launch>

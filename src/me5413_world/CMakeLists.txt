@@ -43,5 +43,13 @@ add_executable(goal_publisher_node src/goal_publisher_node.cpp)
 target_link_libraries(goal_publisher_node ${catkin_LIBRARIES})
 add_dependencies(goal_publisher_node ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
+add_executable(initial_pose_publisher src/initial_pose_publisher.cpp)
+target_link_libraries(initial_pose_publisher ${catkin_LIBRARIES})
+
 add_library(object_spawner_gz_plugin SHARED src/object_spawner_gz_plugin.cpp)
 target_link_libraries(object_spawner_gz_plugin ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
+
+# Install Python scripts
+catkin_install_python(PROGRAMS scripts/task_executor.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
